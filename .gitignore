@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+
+# Env secrets
+.env
+
+# Pipeline outputs / downloads / caches
+outputs/
+*.mp4
+*.mov
+
+# EasyOCR/torch model cache if it lands in-repo
+.EasyOCR/

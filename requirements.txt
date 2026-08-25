@@ -1,0 +1,29 @@
+# ---- core pipeline ----
+yt-dlp>=2024.8.6
+ffmpeg-python>=0.2.0
+static-ffmpeg>=2.7   # bundles ffmpeg/ffprobe binaries via pip, sidesteps system PATH issues
+opencv-python-headless>=4.9.0
+numpy>=1.26.0
+Pillow>=10.3.0
+rapidfuzz>=3.9.0          # fuzzy text similarity for dialogue matching
+python-dotenv>=1.0.1
+pydantic>=2.7.0
+
+# ---- OCR engine ----
+# easyocr ships a DBNet detector + CRNN-style recognizer out of the box,
+# which is what core/ocr/engine.py wraps by default. Swappable later.
+easyocr>=1.7.1
+torch>=2.2.0
+torchvision>=0.17.0
+
+# ---- service layer (optional, only needed if running FastAPI app) ----
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+redis>=5.0.4
+sqlalchemy>=2.0.30
+psycopg2-binary>=2.9.9
+minio>=7.2.7
+python-multipart>=0.0.9
+
+# ---- tests ----
+pytest>=8.2.0
