@@ -111,7 +111,7 @@ export default function App() {
     <div className="min-h-screen">
       <Header />
 
-      <main className="max-w-5xl mx-auto px-6 py-8 space-y-6">
+      <main className="max-w-6xl mx-auto px-6 lg:px-8 py-10 space-y-7">
         <VideoForm onSubmit={handleSubmit} disabled={isBusy} />
 
         {formError && (
@@ -129,6 +129,7 @@ export default function App() {
         {results && allDialogues.length > 0 && (
           <>
             <Timeline
+              id="timeline"
               dialogues={allDialogues}
               duration={results.duration_sec}
               activeIndex={activeIndex}
@@ -140,7 +141,7 @@ export default function App() {
               }}
             />
 
-            <section className="space-y-3">
+            <section id="results" className="space-y-3">
               <SearchBar onQueryChange={onQueryChange} count={shownDialogues.length} />
               <DialogueList
                 dialogues={shownDialogues}
@@ -161,6 +162,12 @@ export default function App() {
       </main>
 
       <FrameModal item={modalItem} onClose={() => setModalItem(null)} />
+
+      <footer className="max-w-6xl mx-auto px-6 lg:px-8 py-6 border-t border-base-800">
+        <p className="font-mono text-xs text-neutral-700 tracking-widest">
+          v.2026.08 · frame-finder · locate the frame, not just the line
+        </p>
+      </footer>
     </div>
   );
 }

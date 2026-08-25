@@ -4,14 +4,14 @@ function formatShort(ts) {
   return `${m}:${s}`;
 }
 
-export default function Timeline({ dialogues, duration, activeIndex, onSelect }) {
+export default function Timeline({ id, dialogues, duration, activeIndex, onSelect }) {
   if (!dialogues.length || !duration) return null;
 
   return (
-    <div className="bg-base-900 border border-base-700 rounded-lg p-5">
+    <div id={id} className="bg-base-900 border border-base-700 rounded-lg p-5">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="font-mono text-xs uppercase tracking-widest text-neutral-500">
-          Timeline
+        <h3 className="section-marker font-mono text-xs uppercase tracking-widest text-neutral-500">
+          02 · Timeline
         </h3>
         <span className="font-mono text-xs text-neutral-600">
           {formatShort(duration)} total
@@ -36,7 +36,7 @@ export default function Timeline({ dialogues, duration, activeIndex, onSelect })
                   : "bg-base-700 border-base-600 hover:bg-amber-500/70 hover:border-amber-500"
               }`}
             >
-              <span className="pointer-events-none absolute bottom-full mb-2 left-1/2 -translate-x-1/2 whitespace-nowrap font-mono text-[10px] bg-base-800 border border-base-600 rounded px-1.5 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+              <span className="pointer-events-none absolute bottom-full mb-2 left-1/2 -translate-x-1/2 whitespace-nowrap font-mono text-xs bg-base-800 border border-base-600 rounded px-1.5 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                 {formatShort(d.timestamp_sec)}
               </span>
             </button>
