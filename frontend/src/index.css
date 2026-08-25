@@ -4,16 +4,27 @@
 
 @layer base {
   html {
-    color-scheme: dark;
+    color-scheme: light;
+    font-size: 131.25%; /* ~21px root — scales all text/spacing up noticeably */
   }
   body {
     font-family: "Inter", sans-serif;
   }
+  ::-webkit-scrollbar {
+    width: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #f3f5fa;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #c5cbda;
+    border-radius: 6px;
+  }
   ::selection {
-    background: rgba(232, 163, 61, 0.35);
+    background: rgba(238, 108, 46, 0.25);
   }
   :focus-visible {
-    outline: 2px solid #e8a33d;
+    outline: 2px solid #ee6c2e;
     outline-offset: 2px;
   }
 }
@@ -22,7 +33,7 @@
   .sprocket-strip {
     background-image: radial-gradient(
       circle,
-      rgba(240, 185, 79, 0.4) 1.6px,
+      rgba(238, 108, 46, 0.4) 1.6px,
       transparent 1.6px
     );
     background-size: 18px 18px;
@@ -32,10 +43,21 @@
   .film-scan {
     background: repeating-linear-gradient(
       90deg,
-      rgba(232, 163, 61, 0.08) 0px,
-      rgba(232, 163, 61, 0.08) 1px,
+      rgba(238, 108, 46, 0.1) 0px,
+      rgba(238, 108, 46, 0.1) 1px,
       transparent 1px,
       transparent 10px
     );
+  }
+
+  .prompt::before {
+    content: "$ ";
+    color: theme("colors.amber.500");
+  }
+
+  .section-marker::before {
+    content: "§";
+    color: theme("colors.amber.500");
+    margin-right: 0.4em;
   }
 }

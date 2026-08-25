@@ -35,8 +35,8 @@ export default function DialogueCard({ dialogue, active, onOpenFrame }) {
         <p className="text-sm text-neutral-100 leading-snug break-words">
           {dialogue.text}
         </p>
-        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] text-neutral-500">
-          <span className="text-amber-500">{formatTs(dialogue.timestamp_sec)}</span>
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs text-neutral-500">
+          <span className="text-amber-600 font-semibold">{formatTs(dialogue.timestamp_sec)}</span>
           <span>frame {dialogue.frame_number}</span>
           {typeof dialogue.confidence === "number" && (
             <span>conf {(dialogue.confidence * 100).toFixed(0)}%</span>
