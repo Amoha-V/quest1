@@ -47,7 +47,7 @@ export default function TargetMatchCard({ match, onOpenFrame }) {
           First appearance found
         </p>
         <p className="text-lg text-neutral-50 font-medium leading-snug mb-3">
-          "{match.target_text}"
+          "{match.recognized_text || match.target_text}"
         </p>
         <dl className="grid grid-cols-2 sm:grid-cols-4 gap-3 font-mono text-xs">
           <div>

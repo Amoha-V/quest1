@@ -71,12 +71,45 @@ def _best_match_in_frame(frame, target_text: str) -> Optional[TimestampHit]:
     return best
 
 
-def resolve(video_path: Path, meta: VideoMetadata, target_text: str) -> ResolveResult:
+def resolve(
+    video_path: Path,
+    meta: VideoMetadata,
+    target_text: str,
+    *,
+    stop_at_first: bool = True,
+    on_progress=None,
+) -> ResolveResult:
+    """
+    Locate the first frame where `target_text` appears.
+
+    By default (`stop_at_first=True`) the coarse pass stops as soon as the
+    first chronological match clears the similarity threshold -- matching
+    the assignment ("the dialogue that first appears") and avoiding a full
+    remaining-video walk. Pass `stop_at_first=False` to keep scanning for
+    later reappearances (reported as `other_matches`).
+
+    `on_progress(stage, message, progress)` is optional; called with
+    stage "scan" during the coarse pass and "refine" during backward walk.
+    """
     coarse_hits: List[TimestampHit] = []
     near_miss: Optional[TimestampHit] = None
+    duration = max(meta.duration_sec, 1e-6)
+    last_report_ts = -999.0
+
+    def _report(stage: str, message: str, progress: Optional[float] = None) -> None:
+        if on_progress is not None:
+            on_progress(stage, message, progress)
 
     logger.info("Phase 1: coarse scan (interval=%.2fs)", settings.coarse_sample_interval_sec)
+    _report("scan", "Scanning frames for on-screen dialogue…", 0.0)
     for ts in coarse_timestamps(meta):
+        if ts - last_report_ts >= 2.0 or ts == 0.0:
+            _report(
+                "scan",
+                f"Scanning frames… {ts:.0f}s / {meta.duration_sec:.0f}s",
+                min(ts / duration, 0.95),
+            )
+            last_report_ts = ts
         frame = extract_frame(video_path, ts, meta)
         best = _best_match_in_frame(frame, target_text)
         if best is None:
@@ -86,6 +119,9 @@ def resolve(video_path: Path, meta: VideoMetadata, target_text: str) -> ResolveR
         if best.similarity >= settings.text_similarity_threshold:
             logger.info("Coarse match at %.2fs: %r (sim=%.2f)", ts, best.text, best.similarity)
             coarse_hits.append(best)
+            if stop_at_first:
+                logger.info("Stopping coarse scan at first match (%.2fs)", ts)
+                break
         elif near_miss is None or best.similarity > near_miss.similarity:
             near_miss = best
 
@@ -98,6 +134,11 @@ def resolve(video_path: Path, meta: VideoMetadata, target_text: str) -> ResolveR
     other_matches = [h for h in coarse_hits if h is not anchor]
 
     logger.info("Phase 2: refining backward from %.2fs", anchor.timestamp_sec)
+    _report(
+        "refine",
+        f"Pinning exact first frame near {anchor.timestamp_sec:.1f}s…",
+        0.96,
+    )
     refine_hits: List[TimestampHit] = [anchor]
     for ts in refine_timestamps_before(anchor.timestamp_sec):
         if ts == anchor.timestamp_sec:

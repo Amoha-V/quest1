@@ -16,6 +16,9 @@ export default function App() {
   const [videoId, setVideoId] = useState(null);
   const [jobStatus, setJobStatus] = useState(null); // pending | processing | done | error
   const [jobError, setJobError] = useState(null);
+  const [jobStage, setJobStage] = useState(null);
+  const [jobMessage, setJobMessage] = useState(null);
+  const [jobProgress, setJobProgress] = useState(null);
   const [results, setResults] = useState(null); // { dialogues, target_matches, duration_sec, ... }
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState(null); // null = not searching, show all
@@ -33,16 +36,19 @@ export default function App() {
 
   useEffect(() => stopPolling, [stopPolling]);
 
-  async function handleSubmit(url, targetText) {
+  async function handleSubmit(url, targetText, scanAll = false) {
     setFormError(null);
     setResults(null);
     setSearchResults(null);
     setQuery("");
     setActiveIndex(null);
+    setJobStage(null);
+    setJobMessage(null);
+    setJobProgress(null);
     stopPolling();
 
     try {
-      const res = await submitVideo(url, targetText);
+      const res = await submitVideo(url, targetText, false, scanAll);
       setJobId(res.job_id);
       setVideoId(res.video_id);
       setJobStatus(res.status);
@@ -53,6 +59,9 @@ export default function App() {
           const s = await getJobStatus(res.job_id);
           setJobStatus(s.status);
           setJobError(s.error);
+          setJobStage(s.stage ?? null);
+          setJobMessage(s.message ?? null);
+          setJobProgress(typeof s.progress === "number" ? s.progress : null);
           if (s.status === "done") {
             stopPolling();
             const r = await getResults(s.video_id || res.video_id);
@@ -65,7 +74,7 @@ export default function App() {
           setJobStatus("error");
           stopPolling();
         }
-      }, POLL_INTERVAL_MS);
+      }, 1000);
     } catch (err) {
       setFormError(err.message);
     }
@@ -120,13 +129,24 @@ export default function App() {
           </div>
         )}
 
-        {jobStatus && <StatusBanner status={jobStatus} error={jobError} />}
+        {jobStatus && (
+          <StatusBanner
+            status={jobStatus}
+            error={jobError}
+            stage={jobStage}
+            message={jobMessage}
+            progress={jobProgress}
+          />
+        )}
 
         {latestTargetMatch && (
           <TargetMatchCard match={latestTargetMatch} onOpenFrame={openFrame} />
         )}
 
-        {results && allDialogues.length > 0 && (
+        {/* Full dialogue list / timeline only when the user opted into scan-all
+            (or when more than one line was returned). First-dialogue-only runs
+            surface the answer via TargetMatchCard above. */}
+        {results && allDialogues.length > 1 && (
           <>
             <Timeline
               id="timeline"
@@ -152,7 +172,17 @@ export default function App() {
           </>
         )}
 
-        {results && allDialogues.length === 0 && (
+        {results && allDialogues.length === 1 && !latestTargetMatch && (
+          <section id="results" className="space-y-3">
+            <DialogueList
+              dialogues={shownDialogues}
+              activeIndex={activeIndex}
+              onOpenFrame={openFrame}
+            />
+          </section>
+        )}
+
+        {results && allDialogues.length === 0 && !latestTargetMatch && (
           <div className="text-center py-12 border border-dashed border-base-700 rounded-lg">
             <p className="text-sm text-neutral-500">
               No on-screen dialogue was detected in this video.

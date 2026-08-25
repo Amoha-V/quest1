@@ -1,4 +1,4 @@
-from core.dialogue_scan import DialogueOccurrence, _find_existing
+from core.dialogue_scan import DialogueOccurrence, _find_existing, scan_first_dialogue
 
 
 def _occ(text, ts=0.0):
@@ -25,3 +25,43 @@ def test_first_seen_wins_when_multiple_known_lines_are_similar():
     # should fold into whichever known line is the closer/best match, not
     # silently create a third near-duplicate entry
     assert match in known
+
+
+def test_scan_first_dialogue_stops_at_earliest_detection(monkeypatch):
+    """scan_first_dialogue must not keep walking after the first hit."""
+    from core.source.metadata import VideoMetadata
+    from pathlib import Path
+    import core.dialogue_scan as ds
+
+    meta = VideoMetadata(
+        duration_sec=10.0,
+        fps=25.0,
+        width=320,
+        height=180,
+    )
+    calls = {"n": 0}
+
+    def fake_timestamps(_meta):
+        # would continue past 2.0 if the scanner failed to stop
+        yield from (0.0, 1.0, 2.0, 3.0, 4.0)
+
+    def fake_extract(_path, ts, _meta):
+        calls["n"] += 1
+        return object()
+
+    def fake_best(_frame):
+        # first two timestamps empty; third (ts=2.0) has dialogue
+        if calls["n"] < 3:
+            return None
+        return ("My mind rebels at stagnation", 0.95, (10, 20, 100, 30))
+
+    monkeypatch.setattr(ds, "coarse_timestamps", fake_timestamps)
+    monkeypatch.setattr(ds, "extract_frame", fake_extract)
+    monkeypatch.setattr(ds, "_best_detection_in_frame", fake_best)
+
+    result = scan_first_dialogue(Path("dummy.mp4"), meta)
+    assert result is not None
+    assert result.text == "My mind rebels at stagnation"
+    assert result.first_timestamp_sec == 2.0
+    # stopped after the hit at 2.0 -- never sampled 3.0 / 4.0
+    assert calls["n"] == 3

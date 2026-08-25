@@ -107,8 +107,24 @@ def set_job_status(
     *,
     video_id: Optional[str] = None,
     error: Optional[str] = None,
+    stage: Optional[str] = None,
+    message: Optional[str] = None,
+    progress: Optional[float] = None,
 ) -> None:
-    payload = {"job_id": job_id, "status": status, "video_id": video_id, "error": error}
+    """Persist job status. `stage` / `message` / `progress` (0..1) are optional
+    high-level pipeline hints for the UI while status is processing."""
+    existing = get_job_status(job_id) or {}
+    payload = {
+        "job_id": job_id,
+        "status": status,
+        "video_id": video_id if video_id is not None else existing.get("video_id"),
+        "error": error,
+        "stage": stage if stage is not None else existing.get("stage"),
+        "message": message if message is not None else existing.get("message"),
+        "progress": progress if progress is not None else existing.get("progress"),
+    }
+    if status in (STATUS_DONE, STATUS_ERROR):
+        payload["progress"] = 1.0 if status == STATUS_DONE else existing.get("progress")
     _get_client().set(_status_key(job_id), json.dumps(payload), ex=JOB_STATUS_TTL_SEC)
 
 

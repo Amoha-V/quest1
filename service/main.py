@@ -24,7 +24,14 @@ from service.routers import search, videos
 
 app = FastAPI(title="Frame Finder", version="0.1.0")
 
-_allowed_origins = os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+_allowed_origins = [
+    o.strip()
+    for o in os.getenv(
+        "CORS_ALLOWED_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173",
+    ).split(",")
+    if o.strip()
+]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
@@ -45,7 +52,18 @@ def _on_startup() -> None:
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    from sqlalchemy import text as sa_text
+    from service.db.session import engine
+
+    db_url = engine.url.render_as_string(hide_password=True)
+    backend = engine.dialect.name
+    try:
+        with engine.connect() as conn:
+            conn.execute(sa_text("SELECT 1"))
+        db_ok = True
+    except Exception:
+        db_ok = False
+    return {"status": "ok" if db_ok else "degraded", "db": backend, "db_url": db_url, "db_ok": db_ok}
 
 
 @app.get("/static-local")

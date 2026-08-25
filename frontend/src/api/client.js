@@ -18,11 +18,19 @@ async function request(path, options = {}) {
   return res.json();
 }
 
-/** POST /videos/process -- kicks off async processing, returns {job_id, video_id, status} */
-export function submitVideo(url, targetText, force = false) {
+/** POST /videos/process -- kicks off async processing, returns {job_id, video_id, status}
+ *  scanAll=false (default): stop at the first dialogue.
+ *  scanAll=true: collect every distinct on-screen dialogue frame.
+ */
+export function submitVideo(url, targetText, force = false, scanAll = false) {
   return request("/videos/process", {
     method: "POST",
-    body: JSON.stringify({ url, target_text: targetText || null, force }),
+    body: JSON.stringify({
+      url,
+      target_text: targetText || null,
+      force,
+      scan_all: scanAll,
+    }),
   });
 }
 

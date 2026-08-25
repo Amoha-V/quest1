@@ -1,19 +1,17 @@
 """
-Full-video dialogue scan: walks the whole video once (reusing the same
-coarse sampler / preprocessing / OCR / filtering modules as core.resolver)
-and returns *every distinct* on-screen dialogue line detected, each tagged
-with the earliest timestamp/frame it was seen at.
+Dialogue scan helpers over the same coarse sampler / preprocessing / OCR /
+filtering stack as core.resolver:
 
-This is a separate module from core/resolver.py on purpose:
-  - resolver.py answers "when does *this one* target line first appear?"
-    (coarse pass -> backward refine -> single answer)
-  - dialogue_scan.py answers "what dialogue lines appear in this video at
-    all?" (single coarse pass -> dedup -> many answers)
+  - scan_first_dialogue(): default assignment path -- walk until the *first*
+    on-screen dialogue appears, then stop (pipeline refines that line for
+    the exact onset frame via resolver).
+  - scan_all_dialogues(): optional full-video pass -- every distinct
+    on-screen line, each tagged with the earliest coarse timestamp it was
+    seen at.
 
-They're both thin orchestrators over the same lower-level modules
-(core/sampling, core/preprocessing, core/ocr, core/matching), so neither
-duplicates OCR/matching logic -- they just compose it differently for two
-different questions. core/pipeline.py decides which one(s) to call.
+resolver.py answers "when does *this one* target line first appear?"
+(coarse -> backward refine). dialogue_scan answers "what dialogue appears
+(first / at all)?". core/pipeline.py chooses which one(s) to call.
 """
 from __future__ import annotations
 
@@ -60,7 +58,59 @@ def _find_existing(
     return None
 
 
-def scan_all_dialogues(video_path: Path, meta: VideoMetadata) -> List[DialogueOccurrence]:
+def _best_detection_in_frame(frame) -> Optional[tuple[str, float, tuple[int, int, int, int]]]:
+    """Highest-confidence plausible dialogue detection in a preprocessed frame,
+    or None if nothing clears the OCR confidence floor."""
+    detections = filter_detections(run_ocr(preprocess(frame)))
+    best = None
+    for det in detections:
+        if det.confidence < settings.ocr_min_confidence:
+            continue
+        if best is None or det.confidence > best[1]:
+            best = (det.text, det.confidence, det.bbox)
+    return best
+
+
+def scan_first_dialogue(
+    video_path: Path, meta: VideoMetadata, on_progress=None
+) -> Optional[DialogueOccurrence]:
+    """
+    Coarse-walk the video and stop at the first plausible on-screen dialogue.
+    Returns None if no dialogue is found. Frame accuracy for that line is
+    left to core.resolver.resolve() (backward ROI refine).
+    """
+    logger.info(
+        "Dialogue scan: first-only coarse pass (interval=%.2fs)",
+        settings.coarse_sample_interval_sec,
+    )
+    duration = max(meta.duration_sec, 1e-6)
+    last_report_ts = -999.0
+    for ts in coarse_timestamps(meta):
+        if on_progress is not None and (ts - last_report_ts >= 2.0 or ts == 0.0):
+            on_progress(
+                "scan",
+                f"Looking for first dialogue… {ts:.0f}s / {meta.duration_sec:.0f}s",
+                min(ts / duration, 0.95),
+            )
+            last_report_ts = ts
+        frame = extract_frame(video_path, ts, meta)
+        best = _best_detection_in_frame(frame)
+        if best is None:
+            continue
+        text, confidence, bbox = best
+        logger.info("First dialogue at %.2fs: %r -- stopping scan", ts, text)
+        return DialogueOccurrence(
+            text=text,
+            first_timestamp_sec=ts,
+            frame_number=meta.timestamp_to_frame(ts),
+            confidence=confidence,
+            bbox=bbox,
+        )
+    logger.warning("No on-screen dialogue found in coarse first-only pass")
+    return None
+
+
+def scan_all_dialogues(video_path: Path, meta: VideoMetadata, on_progress=None) -> List[DialogueOccurrence]:
     """
     Single coarse pass over the full video. For every OCR detection that
     survives text_filter.filter_detections, either fold it into an already
@@ -75,9 +125,18 @@ def scan_all_dialogues(video_path: Path, meta: VideoMetadata) -> List[DialogueOc
     is for, and is used for the specific target-text lookup.
     """
     dialogues: List[DialogueOccurrence] = []
+    duration = max(meta.duration_sec, 1e-6)
+    last_report_ts = -999.0
 
-    logger.info("Dialogue scan: coarse pass (interval=%.2fs)", settings.coarse_sample_interval_sec)
+    logger.info("Dialogue scan: full coarse pass (interval=%.2fs)", settings.coarse_sample_interval_sec)
     for ts in coarse_timestamps(meta):
+        if on_progress is not None and (ts - last_report_ts >= 2.0 or ts == 0.0):
+            on_progress(
+                "scan",
+                f"Scanning all dialogues… {ts:.0f}s / {meta.duration_sec:.0f}s",
+                min(ts / duration, 0.95),
+            )
+            last_report_ts = ts
         frame = extract_frame(video_path, ts, meta)
         detections = filter_detections(run_ocr(preprocess(frame)))
 

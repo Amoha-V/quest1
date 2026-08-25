@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from core.source.downloader import video_id_for
 from service.cache import redis_client
 from service.db.models import Dialogue, TargetMatch, Video
 from service.db.session import get_session_dep
@@ -31,6 +32,9 @@ class ProcessRequest(BaseModel):
     url: str
     target_text: Optional[str] = None
     force: bool = False
+    # False (default): find the first dialogue and stop the pipeline.
+    # True: scan the whole video and return every distinct dialogue frame.
+    scan_all: bool = False
 
 
 class ProcessResponse(BaseModel):
@@ -44,10 +48,19 @@ def process(req: ProcessRequest):
     if not req.url.strip():
         raise HTTPException(status_code=422, detail="url must not be empty")
 
-    job_id = video_worker.submit_job(req.url, target_text=req.target_text, force=req.force)
+    job_id = video_worker.submit_job(
+        req.url,
+        target_text=req.target_text,
+        force=req.force,
+        scan_all=req.scan_all,
+    )
     job_status = redis_client.get_job_status(job_id)
-    video_id = job_status["video_id"] if job_status else video_worker.job_id_for(req.url, None)
-    return ProcessResponse(job_id=job_id, video_id=video_id, status=job_status["status"] if job_status else "pending")
+    vid = job_status["video_id"] if job_status else video_id_for(req.url)
+    return ProcessResponse(
+        job_id=job_id,
+        video_id=vid,
+        status=job_status["status"] if job_status else "pending",
+    )
 
 
 @router.get("/{job_id}/status")

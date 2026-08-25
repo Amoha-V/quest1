@@ -31,23 +31,35 @@ logger = logging.getLogger(__name__)
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="video-worker")
 
 
-def job_id_for(url: str, target_text: Optional[str]) -> str:
+def job_id_for(url: str, target_text: Optional[str], scan_all: bool = False) -> str:
     video_id = video_id_for(url)
-    if not target_text:
-        return video_id
     import hashlib
 
-    text_hash = hashlib.sha1(target_text.encode("utf-8")).hexdigest()[:8]
-    return f"{video_id}:{text_hash}"
+    parts = [video_id]
+    if target_text:
+        parts.append(hashlib.sha1(target_text.encode("utf-8")).hexdigest()[:8])
+    # Keep first-only vs full-scan jobs distinct so toggling the option
+    # does not reuse the wrong cached result.
+    parts.append("all" if scan_all else "first")
+    return ":".join(parts)
 
 
-def submit_job(url: str, target_text: Optional[str] = None, force: bool = False) -> str:
+def submit_job(
+    url: str,
+    target_text: Optional[str] = None,
+    force: bool = False,
+    scan_all: bool = False,
+) -> str:
     """Enqueue processing for `url` (+ optional `target_text`). Returns the
     job_id the client should poll. Safe to call repeatedly for the same
-    (url, target_text) -- job status is idempotent and core.pipeline has
-    its own on-disk result caching, so a duplicate submission is cheap
-    once the first has completed."""
-    job_id = job_id_for(url, target_text)
+    (url, target_text, scan_all) -- job status is idempotent and
+    core.pipeline has its own on-disk result caching, so a duplicate
+    submission is cheap once the first has completed.
+
+    Default scan_all=False finds only the first dialogue and stops;
+    scan_all=True walks the whole video for every distinct line.
+    """
+    job_id = job_id_for(url, target_text, scan_all=scan_all)
     video_id = video_id_for(url)
 
     existing = redis_client.get_job_status(job_id)
@@ -55,22 +67,78 @@ def submit_job(url: str, target_text: Optional[str] = None, force: bool = False)
         logger.info("Job %s already in flight, not re-submitting", job_id)
         return job_id
 
-    redis_client.set_job_status(job_id, redis_client.STATUS_PENDING, video_id=video_id)
-    _executor.submit(_run_job, job_id, video_id, url, target_text, force)
+    redis_client.set_job_status(
+        job_id,
+        redis_client.STATUS_PENDING,
+        video_id=video_id,
+        stage="queued",
+        message="Queued…",
+        progress=0.0,
+    )
+    _executor.submit(_run_job, job_id, video_id, url, target_text, force, scan_all)
     return job_id
 
 
-def _run_job(job_id: str, video_id: str, url: str, target_text: Optional[str], force: bool) -> None:
-    redis_client.set_job_status(job_id, redis_client.STATUS_PROCESSING, video_id=video_id)
+def _run_job(
+    job_id: str,
+    video_id: str,
+    url: str,
+    target_text: Optional[str],
+    force: bool,
+    scan_all: bool = False,
+) -> None:
+    redis_client.set_job_status(
+        job_id,
+        redis_client.STATUS_PROCESSING,
+        video_id=video_id,
+        stage="queued",
+        message="Starting pipeline…",
+        progress=0.0,
+    )
+
+    def on_progress(stage: str, message: str, progress=None) -> None:
+        redis_client.set_job_status(
+            job_id,
+            redis_client.STATUS_PROCESSING,
+            video_id=video_id,
+            stage=stage,
+            message=message,
+            progress=progress,
+        )
+
     try:
-        result = process_video_full(url, target_text=target_text, force=force)
+        result = process_video_full(
+            url,
+            target_text=target_text,
+            force=force,
+            scan_all=scan_all,
+            on_progress=on_progress,
+        )
+        on_progress("save", "Persisting results…", 0.99)
         _persist_result(video_id, url, result)
         redis_client.cache_result(job_id, result)
-        redis_client.set_job_status(job_id, redis_client.STATUS_DONE, video_id=video_id)
-        logger.info("Job %s done (%d dialogues)", job_id, len(result["dialogues"]))
+        redis_client.set_job_status(
+            job_id,
+            redis_client.STATUS_DONE,
+            video_id=video_id,
+            stage="done",
+            message="Finished",
+            progress=1.0,
+        )
+        logger.info(
+            "Job %s done (%d dialogues, scan_all=%s)",
+            job_id, len(result["dialogues"]), scan_all,
+        )
     except Exception as exc:
         logger.exception("Job %s failed", job_id)
-        redis_client.set_job_status(job_id, redis_client.STATUS_ERROR, video_id=video_id, error=str(exc))
+        redis_client.set_job_status(
+            job_id,
+            redis_client.STATUS_ERROR,
+            video_id=video_id,
+            error=str(exc),
+            stage="error",
+            message="Pipeline failed",
+        )
 
 
 def _persist_result(video_id: str, url: str, result: dict) -> None:
