@@ -1,0 +1,269 @@
+LLM PROMPTS USED
+================
+
+This project was built across three phases of LLM-assisted work: research
+(surveying the problem space), design (working through architecture
+decisions before writing code), and implementation (building, debugging,
+and optimizing with Claude Code). Prompts are listed in the order they were
+actually asked.
+
+
+RESEARCH PHASE
+--------------
+
+- Can you find any research papers or popular articles on Video OCR?
+- You're a software engineer, so can you resonate with any of these ideas
+  with the problem statement, which you find useful for this use case?
+
+
+DESIGN PHASE
+------------
+
+Worked through the architecture module by module before writing any code:
+
+- so the whole idea is if the video has subtitles display the dialogue ocr
+  and stuff else we need to use speech detection right?
+- Great, so now I've classified the problem statement primitively into 4
+  stages 1. ingest the video and video analysis (video to frames), 2. Text
+  Detection and Recognition (wrt each frame), 3. Text matching (similarity
+  among look-alike frames), 4. Result - would like to refine it a little
+  bit?
+- sure, so let's go through it module by module before building - in the
+  video ingestion stage it's specified as any url so can we use ffmpeg that
+  i used for my youtube transcript project?
+- so we'll stick with ffmpeg, after ingesting the video temporarily we need
+  to look at the metadata of the input video and is there any crucial steps
+  involved there?
+- so after video ingestion, we need to include a validation layer to check
+  if the input contains a valid duration, video stream, decodable by ffmpeg
+  - previously we used ffmpeg for metadata right, here what are the exact
+  metadata details needed?
+- what's the best models for speech to text detection?
+- what is CFR and VFR here?
+- can we know if the video is in CFR or VFR after ingesting?
+- should we handle the frames-to-timestamp mapping differently according
+  to CFR and VFR?
+- how can we optimally handle CFR or VFR, or it doesn't create a big
+  difference in the big picture?
+- after the metadata extraction what exactly has to be done?
+- but for both CFR and VFR we handle it in the same way right?
+- here for CFR, we don't need timestamps since we can use direct approach
+  but this case should also work for VFR so we are calculating timestamp
+  instead of frames right?
+- after this we pass the video to the frame extraction stage?
+- what's exactly the input and output here?
+- now let's work on the sampling strategy
+- what's the difference between Coarse Frame sampling vs text-aware
+  sampling?
+- but in coarse frame sampling we need frames right, but as a general case
+  we calculate the timestamps for both CFR and VFR and not frames?
+- so we'll stick with coarse sampling since text-aware sampling is
+  overkill - explain how can we properly implement this strategy here for
+  our use case?
+- so basically we are finding potential candidates here right?
+- so what's the abstract strategy coarse sampling follows here? is it the
+  difference between the pixels?
+- but if the text appears on the 1st sec but samples are at 0.5th and
+  1.5th sec, doesn't it miss out?
+- instead can we use pixel-based sampling strategy and define a Region of
+  Interest (e.g. where subtitles are located, e.g. rectangular region on
+  the lower bottom of screen) so it'll identify the frames?
+- but what if it's not specific so we'll have this by default and coarse
+  sampling as a fallback mechanism - so this works as an optimization?
+- can we detect ROI automatically?
+- regardless of any sampling strategy, text models are required right?
+- after sampling, suggest me simple text detection models that either says
+  yes or no for text detection, and suggest me how OCR happens next?
+- suggest a combo of text detection+OCR models which are open source and
+  lightweight
+- we'll proceed with DBNet Mobile + CRNN Mobile (PaddleOCR) - but where
+  would the candidates be stored?
+- i need to show the users all the frames where text is identified along
+  with the desirable text too, how can i do it? can i store it and
+  retrieve?
+- can we store only text-positive frames?
+- if the sampling happens at 0.5 and 1 but it identifies the text at 0.5th
+  sec but the text started appearing in the 0.4th sec, isn't it a
+  bottleneck since the PS asks us to give the frame where the dialogue
+  first appears? also does that mean no display of duplicate frames?
+- in temporal refinement it merges for a fixed interval but what happens
+  if the same text appears at 2th sec and then at 198th sec?
+- after OCR, among the candidates how is the similarity checked?
+- what are the other similarity algorithms and which solves this specific
+  use case best and why?
+- output must look like: Timestamp / Frame / Text / image - so do we need
+  timestamp-to-frame mapping or tracing throughout the pipeline and how can
+  we display the specific video frame as image?
+- so along with image and identity of a frame where can we store this
+  data? Metadata DB - PostgreSQL, Frame storage - MinIO, OCR pipeline -
+  PaddleOCR DBNet + CRNN, we'll proceed with this
+- is using sqlite more faster than using postgres?
+- suggest me any opensource DBs for this specific use case that has to be
+  deployable?
+- can i use fuzzy logic here (string similarity)?
+- isn't fuzzy logic overkill?
+- now coming to the edge cases, what if text appears in the clothes of
+  people in the video or banners, our system detects that too right?
+- okay we need to find only the dialogues and not text anywhere like the
+  t-shirts or banners so can we use ROI to check only the frames where
+  dialogue appears and OCR only that?
+- but we already have ROI sampling right and coarse sampling as a fallback
+  mechanism?
+- similarly can you come up with any other edge cases? (produced the
+  edge-case table: short text appearance / adaptive temporal refinement,
+  duplicate frames / frame similarity check, text on clothes-logos /
+  ROI+temporal persistence, multiple text regions / bbox+region metadata,
+  OCR noise / Levenshtein similarity, repeated dialogue / timestamp
+  constraint, VFR videos / timestamp-based indexing, low quality video /
+  preprocessing)
+- along with this, can i use a query cache layer as an optimization layer
+  so it doesn't need to run the entire pipeline?
+- since the video analysis of frames is done parallelly can i have an
+  event-driven architecture there?
+- no need event-driven architecture since it's overkill
+- with the same given context of this conversation, help me create a PRD
+  and a system design and implementation guide explaining each phase
+- now give me architecture, code structure and a description describing
+  the whole pipeline and the important choices and algorithms used module
+  by module so that i could start building it
+- give me the final system architecture and 2 paragraphs that makes the
+  architecture and code implementation clear to implement
+
+
+CODE PHASE
+----------
+
+Initial implementation:
+
+- Refine/critique the architecture first
+- the project asks for... only the dialogue that first appears but right
+  now we are showing all the dialogues so it has to be like by default find
+  the first dialogue and stop the pipeline, also give an option to the
+  users if they want they can see all the frames with dialogues
+- can you add a cache layer to identify the video if already given along
+  with the dialogue so that it could easily retrieve instead of running the
+  whole pipeline again
+- 'Releasing April 29' but this appears on the video top right, we need
+  dialogues that only appear at the bottom, that's the main purpose of
+  using an ROI?
+- is there a mechanism to return the first occurrence of text - say if OCR
+  identifies the text at the 5th sec but it starts at 4.8th sec which is
+  missed out, but still our mechanism should detect it, like moving
+  backwards and checking the start of the text
+- what if text appears only for a very short duration?
+- tell me the approach, architecture and the findings from the whole
+  project, along with the pipeline and what decisions we make at each
+  stage
+
+This session (Claude Code):
+
+Phase 1 - Understanding the pipeline
+  - Once after the first dialogue is found incase no dialogue is specified
+    by the user, does that pipeline run and stop?
+  - if the target is missed by the coarse sampling is there a way to detect
+    it? is there a combination of any layer with coarse sampling to detect
+    it?
+  - in option 2, is it an add-on on top of coarse sampling or are we
+    changing the entire sampling mechanism?
+  - so instead of using coarse sampling for interval of 1 sec we are doing
+    this right?
+  - okay implement this modularily and let me know the changes
+
+Phase 2 - Environment setup
+  - (Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned) ; (&
+    c:\Users\vamoh\Downloads\completeframefinder\venv\Scripts\Activate.ps1)
+  - yes (to installing deps / running a check)
+  - does the db postgres and MinIo images pulled from docker and running
+    instead of squalite, which only acts as the fallback mechanism
+  - ive opened docker desktop, try to connect to the containers
+  - yes (to running the test suite against live services)
+
+Phase 3 - First speed investigation
+  - [UI screenshot: job stuck at "Scanning frames... 1590s / 3262s" 49%]
+    why is it stagnant
+  - can we induce parallelism or can we make some other changes to run this
+    pipeline faster?
+  - okay do only the cheap changes
+  - can you say if these edge cases are solved [pasted the edge-case table]
+  - bt short text appearance is just now solved using cheap change
+    detection frame-diff ryt?
+
+Phase 4 - Cleanup and running it
+  - remove unwanted files and dead code, only keep what is needed
+  - run this pipeline once and also give me the commands to run both
+    frontend and backend?
+
+Phase 5 - Second speed investigation (real video)
+  - [UI screenshot, job stuck again at 1590s/3262s] why is it stuck here
+    for so long
+  - can we induce parallelism or can we make some other changes to run this
+    pipeline faster? (re-asked)
+  - okay do only the cheap changes (re-confirmed)
+  - no still its slower how can i make it faster
+  - can we know if the video has captions or not before the processing
+    itself?
+  - now can i run and check the video? is the implementation done?
+  - can i run it now?
+  - Did you complete the speech part?
+  - okay
+
+Phase 6 - ASR pivot
+  - [pasted the full assignment problem statement] there's no caption in
+    that video, first we need to convert the speech to text then check
+  - okay do only the cheap changes (confirming "run both in parallel,
+    merge results" for OCR vs ASR)
+  - are there any light weight models to do this?
+  - how much time do you expect it to take for a 54 min video?
+  - [UI screenshot: 333s/3262s, 10%] still its slow can you try to take
+    samples at random intervals and check? does that help?
+  - so the whole idea is if the video has subtitles display the dialogue
+    ocr and stuff else we need to use speech detection right?
+  - can we know if the video has captions or not before the processing
+    itself? (re-asked)
+  - does it takes 16 minutes, can we optimize it?
+  - are there any light weight models to do this? (mid-turn follow-up)
+  - how much time will it take?
+  - okay i'll complete then you can give the document
+  - is the cancellation part done?
+  - check first and say i'll check with the frontend url
+
+Phase 7 - Verification and documentation
+  - can you give me the prompts of this session
+  - is the cache layer still available?
+  - remove the unwanted and unused files and dead code
+  - Give me the entire architecture of this, edge cases and the
+    optimizations
+  - did you also include the all the optimizations such as cache,
+    cancellations, parallelism there?
+  - no include all the optimizations such as coarse sampling too?
+  - did you also include my understanding of this problem and how i
+    approached it? also include how did i segment the whole problem
+    statement and name it approach.md
+  - can you also give me a readme file, explaining the setup process too
+  - can you remove - this from all the md files generated
+  - LLM Prompts Used [pasted the full raw prompt history across all
+    phases] can you properly format the prompts into phases its clustered
+  - in the approach file can you add my architectural diagram, initial and
+    the final
+  - it has to be prompts.txt and not prompts.md?
+  - can you include few prompts for test too
+
+
+TESTING & VERIFICATION
+-----------------------
+
+
+  - yes (to running the pytest suite against live Postgres/Redis/MinIO,
+    not just the fallback in-memory/SQLite paths)
+  - run this pipeline once and also give me the commands to run both
+    frontend and backend?
+  - can i run it now?
+  - now can i run and check the video? is the implementation done?
+  - Did you complete the speech part?
+  - is the cancellation part done?
+  - check first and say i'll check with the frontend url
+  - is the cache layer still available?
+  - Can you run the unit tests and once see if the edge cases are resolved 
+
+  GENERATION
+  -Generate design.md file for the technical architecture, optimizations (with measured numbers), edge cases.

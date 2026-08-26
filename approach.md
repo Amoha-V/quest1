@@ -118,6 +118,80 @@ A few distinct kinds of uncertainty, handled differently on purpose:
   and tested rather than removing it, specifically because the assignment
   says the requirement might change in the interview.
 
+## Architecture: initial design vs. what actually shipped
+
+The design-phase diagram was OCR-only, matching a literal reading of "an
+on-screen dialogue appears": ingest, sample, crop to the dialogue region,
+detect and recognize text, fuzzy-match, refine to the onset frame, cache the
+result.
+
+```mermaid
+flowchart TD
+    A[Video URL] --> B[ffmpeg ingestion]
+    B --> C["Metadata probe (CFR/VFR, duration, fps)"]
+    C --> D[Coarse timestamp sampling]
+    D --> E["ROI crop (lower-third subtitle band)"]
+    E --> F["Text detection (DBNet)"]
+    F --> G["OCR recognition (CRNN)"]
+    G --> H["Fuzzy similarity match vs target text"]
+    H --> I{Match?}
+    I -- no, keep sampling --> D
+    I -- yes --> J["Backward temporal refine (find onset frame)"]
+    J --> K["Result: timestamp, frame, text, image"]
+    K --> L[(Postgres: metadata)]
+    K --> M[(MinIO: frame image)]
+    N[Repeat query] --> O{Cache hit?}
+    O -- yes --> K
+    O -- no --> A
+```
+
+That design was correct as far as it went, but it only goes as far as
+on-screen text. What actually shipped adds a second, independent detector
+for spoken dialogue, runs both concurrently instead of picking one upfront,
+and merges whichever answers first:
+
+```mermaid
+flowchart TD
+    A[Video URL] --> B["yt-dlp download + ffprobe metadata"]
+    B --> C{{"combined_resolver: run OCR and ASR concurrently"}}
+    C --> D1
+    C --> E1
+
+    subgraph OCR["OCR path -- core/resolver.py + dialogue_scan.py"]
+    D1["frame_stream.py: single-process ffmpeg decode"] --> D2["ROI crop + preprocess (denoise + CLAHE)"]
+    D2 --> D3["EasyOCR detect, then recognize (parallel_scan.py: 8-worker pool)"]
+    D3 --> D4["Fuzzy match vs target"]
+    D4 --> D5["Backward refine to onset frame"]
+    end
+
+    subgraph ASR["ASR path -- core/asr/"]
+    E1["audio_extractor.py: ffmpeg to 16kHz wav"] --> E2["parallel_transcriber.py: chunked faster-whisper"]
+    E2 --> E3["transcript.json cache"]
+    E3 --> E4["Sliding-window fuzzy match"]
+    end
+
+    D4 -. confident match sets cancel_event .-> E4
+    E4 -. confident match sets cancel_event .-> D4
+
+    D5 --> H["Merge: earliest timestamp wins"]
+    E4 --> H
+
+    H --> I["extract_frame -> PNG"]
+    I --> J[(Postgres: videos/dialogues)]
+    I --> K[(Redis: job status/result)]
+    I --> L[(MinIO: frame storage)]
+    I --> M["File cache: video/audio/transcript/manifest"]
+
+    N[Repeat query] --> O{"Postgres/Redis cache hit?"}
+    O -- yes --> I
+    O -- no --> A
+```
+
+The shape didn't change much (ingest, detect, match, refine, cache) - what
+changed is that "detect" is now two independent paths racing each other
+instead of one, with a cancellation signal between them so the slow path
+doesn't keep running once the fast path already has the answer.
+
 ## What actually happened along the way (and why it matters)
 
 I didn't get a working, fast, correct pipeline by asking for it once. The

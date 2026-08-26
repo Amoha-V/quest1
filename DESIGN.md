@@ -206,17 +206,17 @@ infra issues below). The final, verified pipeline resolves the same video in
 
 | Edge case | Handling | Status |
 |---|---|---|
-| Dialogue is spoken, not captioned | ASR path (`core/asr/`) | ✅ solved - this is literally the assignment's real video |
-| OCR noise / misreads | `rapidfuzz` fuzzy match, same scorer used for ASR misrecognition | ✅ solved |
-| VFR video | Frame extraction seeks by wall-clock timestamp (ffmpeg `-ss`), correct regardless of frame rate variability | ✅ mostly - the *reported* `frame_number` (`ts * average_fps`) can drift slightly on true VFR content; the seek/match mechanism itself is unaffected |
-| Low quality video | Denoise + CLAHE contrast before OCR | ⚠️ partial - helps compression noise/low contrast, not resolution/motion blur |
-| Short-lived on-screen text (shorter than the coarse interval) | Optional `change_detector.py` - a fine-interval (0.15s), OCR-free pixel-diff pre-pass that flags candidate timestamps for the coarse OCR loop to also check | ⚠️ off by default (`CHANGE_DETECTION_ENABLED=false`); real but adds cost |
-| Text on clothes/logos vs. real dialogue | Spatial ROI (lower-third crop) | ⚠️ partial - no temporal-persistence requirement, a one-frame hit in-band still counts |
-| Multiple text regions in one frame | bbox stored on every promoted hit | ⚠️ partial - only the single best-scoring region per frame is kept, others discarded |
-| Duplicate/near-identical frames | - | ❌ not implemented - no perceptual-hash frame dedup exists |
-| Repeated dialogue (same line, later in the video) | `other_matches` / `stop_at_first=False` | ⚠️ built, not wired to any UI/CLI flag |
-| Neither modality confident | Reports the higher-similarity near-miss from either side | ✅ solved - never a silent failure |
-| Video has no subtitle track *and* no clear speech (e.g. music only) | Both `matched=False`, near-miss reported | ✅ handled gracefully, not "stuck" |
+| Dialogue is spoken, not captioned | ASR path (`core/asr/`) | Solved - this is literally the assignment's real video |
+| OCR noise / misreads | `rapidfuzz` fuzzy match, same scorer used for ASR misrecognition | Solved |
+| VFR video | Frame extraction seeks by wall-clock timestamp (ffmpeg `-ss`), correct regardless of frame rate variability | Mostly solved - the *reported* `frame_number` (`ts * average_fps`) can drift slightly on true VFR content; the seek/match mechanism itself is unaffected |
+| Low quality video | Denoise + CLAHE contrast before OCR | Partial - helps compression noise/low contrast, not resolution/motion blur |
+| Short-lived on-screen text (shorter than the coarse interval) | Optional `change_detector.py` - a fine-interval (0.15s), OCR-free pixel-diff pre-pass that flags candidate timestamps for the coarse OCR loop to also check | Partial - off by default (`CHANGE_DETECTION_ENABLED=false`); real but adds cost |
+| Text on clothes/logos vs. real dialogue | Spatial ROI (lower-third crop) | Partial - no temporal-persistence requirement, a one-frame hit in-band still counts |
+| Multiple text regions in one frame | bbox stored on every promoted hit | Partial - only the single best-scoring region per frame is kept, others discarded |
+| Duplicate/near-identical frames | - | Not implemented - no perceptual-hash frame dedup exists |
+| Repeated dialogue (same line, later in the video) | `other_matches` / `stop_at_first=False` | Partial - built, not wired to any UI/CLI flag |
+| Neither modality confident | Reports the higher-similarity near-miss from either side | Solved - never a silent failure |
+| Video has no subtitle track *and* no clear speech (e.g. music only) | Both `matched=False`, near-miss reported | Solved - handled gracefully, not "stuck" |
 
 ## Real failures hit and fixed this session (useful context for defending the design)
 
