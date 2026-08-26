@@ -3,9 +3,14 @@ The core decision-making module: given a video and a target dialogue,
 determines the exact frame where that dialogue first appears.
 
 Two-phase strategy:
-  Phase 1 (coarse):  walk the whole video at a fixed interval (coarse_sampler)
-                      running OCR on each sampled frame, looking for a match
-                      against the target dialogue.
+  Phase 1 (coarse):  walk the whole video (sampling.merged_sampler), running
+                      OCR on each sampled frame, looking for a match against
+                      the target dialogue. By default this is just
+                      coarse_sampler's fixed interval; with
+                      settings.change_detection_enabled, merged_sampler also
+                      folds in change_detector's OCR-free candidate
+                      timestamps, so short-lived dialogue that would fall
+                      entirely between two coarse ticks still gets OCR'd.
   Phase 2 (refine):   once a coarse match is found, step backward in fine
                       increments (roi_sampler.refine_timestamps_before) to
                       find the earliest timestamp where the text is still
@@ -22,6 +27,7 @@ Ambiguity handling:
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -31,10 +37,8 @@ from core.config import settings
 from core.extraction.frame_extractor import extract_frame
 from core.matching.similarity import similarity_score
 from core.matching.temporal_aggregator import TimestampHit, earliest_hit
-from core.matching.text_filter import filter_detections
-from core.ocr.engine import run_ocr
-from core.preprocessing.frame_preprocessor import preprocess
-from core.sampling.coarse_sampler import coarse_timestamps
+from core.ocr.engine import run_dialogue_ocr
+from core.ocr.parallel_scan import iter_scan_detections
 from core.sampling.roi_sampler import refine_timestamps_before
 from core.source.metadata import VideoMetadata
 
@@ -53,10 +57,10 @@ class ResolveResult:
     bbox: Optional[tuple[int, int, int, int]] = None
     other_matches: List[TimestampHit] = field(default_factory=list)
     best_near_miss: Optional[TimestampHit] = None  # populated when matched=False
+    source: str = "ocr"  # "ocr" (on-screen text) or "asr" (spoken dialogue)
 
 
-def _best_match_in_frame(frame, target_text: str) -> Optional[TimestampHit]:
-    detections = filter_detections(run_ocr(preprocess(frame)))
+def _best_match(detections, target_text: str) -> Optional[TimestampHit]:
     best: Optional[TimestampHit] = None
     for det in detections:
         sim = similarity_score(det.text, target_text)
@@ -71,6 +75,12 @@ def _best_match_in_frame(frame, target_text: str) -> Optional[TimestampHit]:
     return best
 
 
+def _best_match_in_frame(frame, target_text: str) -> Optional[TimestampHit]:
+    """Sequential frame->OCR->match, used only by Phase 2 refine (a handful
+    of calls per run near a single anchor -- not worth parallelizing)."""
+    return _best_match(run_dialogue_ocr(frame), target_text)
+
+
 def resolve(
     video_path: Path,
     meta: VideoMetadata,
@@ -78,6 +88,7 @@ def resolve(
     *,
     stop_at_first: bool = True,
     on_progress=None,
+    cancel_event=None,
 ) -> ResolveResult:
     """
     Locate the first frame where `target_text` appears.
@@ -90,6 +101,13 @@ def resolve(
 
     `on_progress(stage, message, progress)` is optional; called with
     stage "scan" during the coarse pass and "refine" during backward walk.
+
+    `cancel_event` (optional threading.Event) is checked once per coarse
+    tick -- core.combined_resolver sets it when ASR already found a
+    confident match, so a scan that would otherwise run to the end of the
+    video (this project's actual video has no on-screen captions at all,
+    so OCR alone never stops early) doesn't keep burning CPU for an answer
+    that can no longer be "the first appearance" of anything.
     """
     coarse_hits: List[TimestampHit] = []
     near_miss: Optional[TimestampHit] = None
@@ -101,29 +119,37 @@ def resolve(
             on_progress(stage, message, progress)
 
     logger.info("Phase 1: coarse scan (interval=%.2fs)", settings.coarse_sample_interval_sec)
+    if settings.subtitle_roi_enabled:
+        logger.info(
+            "Subtitle ROI enabled: lower %.0f%% of the frame",
+            settings.subtitle_roi_height_frac * 100,
+        )
     _report("scan", "Scanning frames for on-screen dialogue…", 0.0)
-    for ts in coarse_timestamps(meta):
-        if ts - last_report_ts >= 2.0 or ts == 0.0:
-            _report(
-                "scan",
-                f"Scanning frames… {ts:.0f}s / {meta.duration_sec:.0f}s",
-                min(ts / duration, 0.95),
-            )
-            last_report_ts = ts
-        frame = extract_frame(video_path, ts, meta)
-        best = _best_match_in_frame(frame, target_text)
-        if best is None:
-            continue
-        best.timestamp_sec = ts
-
-        if best.similarity >= settings.text_similarity_threshold:
-            logger.info("Coarse match at %.2fs: %r (sim=%.2f)", ts, best.text, best.similarity)
-            coarse_hits.append(best)
-            if stop_at_first:
-                logger.info("Stopping coarse scan at first match (%.2fs)", ts)
+    with contextlib.closing(iter_scan_detections(video_path, meta, on_progress=on_progress)) as scans:
+        for ts, detections in scans:
+            if cancel_event is not None and cancel_event.is_set():
+                logger.info("Coarse scan cancelled at %.2fs (other modality already matched)", ts)
                 break
-        elif near_miss is None or best.similarity > near_miss.similarity:
-            near_miss = best
+            if ts - last_report_ts >= 2.0 or ts == 0.0:
+                _report(
+                    "scan",
+                    f"Scanning frames… {ts:.0f}s / {meta.duration_sec:.0f}s",
+                    min(ts / duration, 0.95),
+                )
+                last_report_ts = ts
+            best = _best_match(detections, target_text)
+            if best is None:
+                continue
+            best.timestamp_sec = ts
+
+            if best.similarity >= settings.text_similarity_threshold:
+                logger.info("Coarse match at %.2fs: %r (sim=%.2f)", ts, best.text, best.similarity)
+                coarse_hits.append(best)
+                if stop_at_first:
+                    logger.info("Stopping coarse scan at first match (%.2fs)", ts)
+                    break
+            elif near_miss is None or best.similarity > near_miss.similarity:
+                near_miss = best
 
     if not coarse_hits:
         logger.warning("No coarse match found for target text %r", target_text)

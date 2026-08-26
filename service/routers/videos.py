@@ -41,6 +41,7 @@ class ProcessResponse(BaseModel):
     job_id: str
     video_id: str
     status: str
+    cached: bool = False
 
 
 @router.post("/process", response_model=ProcessResponse)
@@ -60,6 +61,7 @@ def process(req: ProcessRequest):
         job_id=job_id,
         video_id=vid,
         status=job_status["status"] if job_status else "pending",
+        cached=bool(job_status.get("cached")) if job_status else False,
     )
 
 

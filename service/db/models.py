@@ -46,8 +46,6 @@ class Video(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     duration_sec: Mapped[float | None] = mapped_column(Float, nullable=True)
     fps: Mapped[float | None] = mapped_column(Float, nullable=True)
-    width: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    height: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow

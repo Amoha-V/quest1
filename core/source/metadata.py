@@ -18,9 +18,6 @@ class VideoMetadata:
     def timestamp_to_frame(self, timestamp_sec: float) -> int:
         return round(timestamp_sec * self.fps)
 
-    def frame_to_timestamp(self, frame_number: int) -> float:
-        return frame_number / self.fps
-
 
 def probe(video_path: Path) -> VideoMetadata:
     cmd = [

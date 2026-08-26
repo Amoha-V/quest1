@@ -9,10 +9,7 @@ import DialogueList from "./components/DialogueList.jsx";
 import FrameModal from "./components/FrameModal.jsx";
 import { submitVideo, getJobStatus, getResults, searchDialogues, frameSrc } from "./api/client.js";
 
-const POLL_INTERVAL_MS = 2000;
-
 export default function App() {
-  const [jobId, setJobId] = useState(null);
   const [videoId, setVideoId] = useState(null);
   const [jobStatus, setJobStatus] = useState(null); // pending | processing | done | error
   const [jobError, setJobError] = useState(null);
@@ -24,7 +21,9 @@ export default function App() {
   const [searchResults, setSearchResults] = useState(null); // null = not searching, show all
   const [activeIndex, setActiveIndex] = useState(null);
   const [modalItem, setModalItem] = useState(null);
+  const [jobCached, setJobCached] = useState(false);
   const [formError, setFormError] = useState(null);
+  const [submittedTarget, setSubmittedTarget] = useState("");
   const pollRef = useRef(null);
 
   const stopPolling = useCallback(() => {
@@ -45,14 +44,29 @@ export default function App() {
     setJobStage(null);
     setJobMessage(null);
     setJobProgress(null);
+    setJobCached(false);
+    setSubmittedTarget(targetText || "");
     stopPolling();
 
     try {
       const res = await submitVideo(url, targetText, false, scanAll);
-      setJobId(res.job_id);
       setVideoId(res.video_id);
       setJobStatus(res.status);
       setJobError(null);
+      setJobCached(Boolean(res.cached));
+
+      if (res.status === "done") {
+        setJobStage("done");
+        setJobMessage(
+          res.cached
+            ? "Cache hit — same video and dialogue already processed"
+            : "Finished"
+        );
+        setJobProgress(1);
+        const r = await getResults(res.video_id);
+        setResults(r);
+        return;
+      }
 
       pollRef.current = setInterval(async () => {
         try {
@@ -62,6 +76,7 @@ export default function App() {
           setJobStage(s.stage ?? null);
           setJobMessage(s.message ?? null);
           setJobProgress(typeof s.progress === "number" ? s.progress : null);
+          setJobCached(Boolean(s.cached));
           if (s.status === "done") {
             stopPolling();
             const r = await getResults(s.video_id || res.video_id);
@@ -104,10 +119,17 @@ export default function App() {
     frame_url: d.frame_url ? frameSrc(d.frame_url) : d.frame_url,
   }));
 
-  const latestTargetMatch = results?.target_matches?.[0]
+  const wanted = (submittedTarget || "").trim().toLowerCase();
+  const rawMatch =
+    (wanted
+      ? results?.target_matches?.find(
+          (t) => (t.target_text || "").trim().toLowerCase() === wanted
+        )
+      : null) || results?.target_matches?.[0];
+  const latestTargetMatch = rawMatch
     ? {
-        ...results.target_matches[0],
-        frame_url: frameSrc(results.target_matches[0].frame_url),
+        ...rawMatch,
+        frame_url: frameSrc(rawMatch.frame_url),
       }
     : null;
 
@@ -136,6 +158,7 @@ export default function App() {
             stage={jobStage}
             message={jobMessage}
             progress={jobProgress}
+            cached={jobCached}
           />
         )}
 

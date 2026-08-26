@@ -53,7 +53,8 @@ export default function VideoForm({ onSubmit, disabled }) {
         />
         <p className="text-sm text-neutral-600 mt-2">
           By default the pipeline finds the first appearance of this line
-          (or the first on-screen dialogue if blank) and stops.
+          (or the first on-screen dialogue if blank) and stops. Submitting
+          the same URL and dialogue again loads the cached result.
         </p>
       </div>
 

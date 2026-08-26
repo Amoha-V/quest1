@@ -14,11 +14,11 @@ status/result plumbing (Redis/Postgres) stay the same.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
-from core.config import settings
 from core.pipeline import process_video_full
 from core.source.downloader import video_id_for
 from service.cache import redis_client
@@ -31,17 +31,62 @@ logger = logging.getLogger(__name__)
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="video-worker")
 
 
+def normalize_dialogue(text: Optional[str]) -> str:
+    """Stable cache key for a dialogue line: trim, collapse spaces, casefold."""
+    if not text:
+        return ""
+    return " ".join(text.split()).casefold()
+
+
 def job_id_for(url: str, target_text: Optional[str], scan_all: bool = False) -> str:
     video_id = video_id_for(url)
-    import hashlib
-
     parts = [video_id]
-    if target_text:
-        parts.append(hashlib.sha1(target_text.encode("utf-8")).hexdigest()[:8])
+    norm = normalize_dialogue(target_text)
+    if norm:
+        parts.append(hashlib.sha1(norm.encode("utf-8")).hexdigest()[:8])
     # Keep first-only vs full-scan jobs distinct so toggling the option
     # does not reuse the wrong cached result.
     parts.append("all" if scan_all else "first")
     return ":".join(parts)
+
+
+def _postgres_has_result(
+    video_id: str, target_text: Optional[str], scan_all: bool
+) -> bool:
+    """True when Postgres already has a completed result for this lookup."""
+    with get_session() as session:
+        video = session.get(Video, video_id)
+        if video is None or video.status != "done":
+            return False
+        dialogue_count = (
+            session.query(Dialogue).filter(Dialogue.video_id == video_id).count()
+        )
+        if scan_all:
+            return dialogue_count > 1
+        wanted = normalize_dialogue(target_text)
+        if wanted:
+            matches = (
+                session.query(TargetMatch)
+                .filter(TargetMatch.video_id == video_id)
+                .all()
+            )
+            return any(normalize_dialogue(m.target_text) == wanted for m in matches)
+        return dialogue_count >= 1 or (
+            session.query(TargetMatch).filter(TargetMatch.video_id == video_id).count() >= 1
+        )
+
+
+def _mark_cache_hit(job_id: str, video_id: str, source: str) -> None:
+    redis_client.set_job_status(
+        job_id,
+        redis_client.STATUS_DONE,
+        video_id=video_id,
+        stage="done",
+        message=f"Cache hit ({source}) — skipped pipeline",
+        progress=1.0,
+        cached=True,
+        error=None,
+    )
 
 
 def submit_job(
@@ -51,10 +96,11 @@ def submit_job(
     scan_all: bool = False,
 ) -> str:
     """Enqueue processing for `url` (+ optional `target_text`). Returns the
-    job_id the client should poll. Safe to call repeatedly for the same
-    (url, target_text, scan_all) -- job status is idempotent and
-    core.pipeline has its own on-disk result caching, so a duplicate
-    submission is cheap once the first has completed.
+    job_id the client should poll.
+
+    Cache key is (video URL, normalized dialogue, scan_all). On a hit we
+    return status=done immediately and do not re-run OCR. Pass force=True
+    to bypass the cache.
 
     Default scan_all=False finds only the first dialogue and stops;
     scan_all=True walks the whole video for every distinct line.
@@ -67,6 +113,23 @@ def submit_job(
         logger.info("Job %s already in flight, not re-submitting", job_id)
         return job_id
 
+    if not force:
+        cached = redis_client.get_cached_result(job_id)
+        if cached is not None:
+            try:
+                if not _postgres_has_result(video_id, target_text, scan_all):
+                    logger.info("Redis hit for %s but Postgres empty — restoring rows", job_id)
+                    _persist_result(video_id, url, cached)
+                logger.info("Cache hit (redis) for %s — skipping pipeline", job_id)
+                _mark_cache_hit(job_id, video_id, "redis")
+                return job_id
+            except Exception:
+                logger.exception("Could not restore Redis cache for %s — running pipeline", job_id)
+        elif _postgres_has_result(video_id, target_text, scan_all):
+            logger.info("Cache hit (postgres) for %s — skipping pipeline", job_id)
+            _mark_cache_hit(job_id, video_id, "postgres")
+            return job_id
+
     redis_client.set_job_status(
         job_id,
         redis_client.STATUS_PENDING,
@@ -74,6 +137,7 @@ def submit_job(
         stage="queued",
         message="Queued…",
         progress=0.0,
+        cached=False,
     )
     _executor.submit(_run_job, job_id, video_id, url, target_text, force, scan_all)
     return job_id
@@ -124,6 +188,7 @@ def _run_job(
             stage="done",
             message="Finished",
             progress=1.0,
+            cached=False,
         )
         logger.info(
             "Job %s done (%d dialogues, scan_all=%s)",

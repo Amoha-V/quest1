@@ -18,6 +18,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
 
+from core.combined_resolver import resolve_combined
 from core.config import settings
 from core.dialogue_scan import DialogueOccurrence, scan_all_dialogues, scan_first_dialogue
 from core.extraction.frame_extractor import extract_frame, save_frame
@@ -62,13 +63,14 @@ def process_video(url: str, target_text: str, force: bool = False) -> dict:
         meta.duration_sec, meta.fps, meta.width, meta.height,
     )
 
-    result: ResolveResult = resolve(video_path, meta, target_text, stop_at_first=True)
+    result: ResolveResult = resolve_combined(video_path, meta, video_id, target_text)
 
     output = {
         "url": url,
         "video_id": video_id,
         "target_text": result.target_text,
         "matched": result.matched,
+        "source": result.source,
     }
 
     if result.matched:
@@ -125,7 +127,7 @@ def _target_match_out(
     target_text: str,
     result: ResolveResult,
 ) -> dict:
-    target_out = {"target_text": target_text, "matched": result.matched}
+    target_out = {"target_text": target_text, "matched": result.matched, "source": result.source}
     if result.matched:
         _, frame_path, _ = _result_paths(video_id, target_text)
         frame = extract_frame(video_path, result.timestamp_sec, meta)
@@ -214,14 +216,24 @@ def process_video_full(
             manifest_path.write_text(json.dumps(dialogues_out, indent=2))
 
         if target_text:
-            result = resolve(
-                video_path, meta, target_text, stop_at_first=True, on_progress=on_progress
+            result = resolve_combined(
+                video_path, meta, video_id, target_text, on_progress=on_progress
             )
             target_match = _target_match_out(video_id, video_path, meta, target_text, result)
     else:
         # Default: first dialogue only, then stop.
-        resolve_text = target_text
-        if not resolve_text:
+        if target_text:
+            # A specific line was asked for -- it could be on-screen text or
+            # spoken dialogue (or both), so check both concurrently rather
+            # than assuming on-screen (core.combined_resolver).
+            resolve_text = target_text
+            result = resolve_combined(
+                video_path, meta, video_id, target_text, on_progress=on_progress
+            )
+        else:
+            # No target given -- "first dialogue" only has a well-defined
+            # meaning for on-screen text (OCR), so that's the only modality
+            # in play here.
             first = scan_first_dialogue(video_path, meta, on_progress=on_progress)
             if first is None:
                 logger.info("No dialogue found; returning empty result")
@@ -236,10 +248,9 @@ def process_video_full(
                     "target_match": None,
                 }
             resolve_text = first.text
-
-        result = resolve(
-            video_path, meta, resolve_text, stop_at_first=True, on_progress=on_progress
-        )
+            result = resolve(
+                video_path, meta, resolve_text, stop_at_first=True, on_progress=on_progress
+            )
         report("save", "Saving result frame…", 0.98)
         target_match = _target_match_out(video_id, video_path, meta, resolve_text, result)
 

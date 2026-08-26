@@ -18,3 +18,4 @@ outputs/
 
 # EasyOCR/torch model cache if it lands in-repo
 .EasyOCR/
+.pytest_cache/

@@ -55,5 +55,3 @@ export function frameSrc(url) {
   if (!url) return null;
   return url.startsWith("http") ? url : `${BASE_URL}${url}`;
 }
-
-export { BASE_URL };

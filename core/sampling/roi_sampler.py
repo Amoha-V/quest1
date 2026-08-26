@@ -38,14 +38,16 @@ def refine_timestamps_before(hit_timestamp: float) -> Iterator[float]:
 BBox = Tuple[int, int, int, int]  # x, y, w, h
 
 
-def expand_bbox(bbox: BBox, frame_w: int, frame_h: int, pad_ratio: float = 0.15) -> BBox:
-    """Pad a detected text bbox slightly so cropped re-checks on nearby
-    frames don't clip text that shifts a few pixels between frames."""
-    x, y, w, h = bbox
-    pad_x = int(w * pad_ratio)
-    pad_y = int(h * pad_ratio)
-    x2 = max(0, x - pad_x)
-    y2 = max(0, y - pad_y)
-    w2 = min(frame_w - x2, w + 2 * pad_x)
-    h2 = min(frame_h - y2, h + 2 * pad_y)
-    return x2, y2, w2, h2
+def subtitle_band(frame_w: int, frame_h: int) -> BBox | None:
+    """Lower-third crop used for dialogue OCR. Returns None when disabled."""
+    if not settings.subtitle_roi_enabled:
+        return None
+    top_frac = min(max(settings.subtitle_roi_top_frac, 0.0), 0.95)
+    height_frac = min(max(settings.subtitle_roi_height_frac, 0.05), 1.0)
+    y = int(frame_h * top_frac)
+    h = max(1, int(frame_h * height_frac))
+    if y + h > frame_h:
+        h = frame_h - y
+    if h <= 0:
+        return None
+    return (0, y, frame_w, h)

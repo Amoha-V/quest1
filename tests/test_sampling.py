@@ -1,5 +1,8 @@
+from core.config import settings
+from core.ocr.engine import offset_detections
+from core.ocr.types import OcrDetection
 from core.sampling.coarse_sampler import coarse_timestamps
-from core.sampling.roi_sampler import refine_timestamps_before
+from core.sampling.roi_sampler import refine_timestamps_before, subtitle_band
 from core.source.metadata import VideoMetadata
 
 
@@ -16,3 +19,21 @@ def test_refine_steps_backward_within_window():
     assert ts[0] == 10.0
     assert min(ts) >= 9.0  # default roi_refine_window_sec = 1.0
     assert all(a >= b for a, b in zip(ts, ts[1:]))  # non-increasing
+
+
+def test_subtitle_band_covers_bottom_third_only():
+    roi = subtitle_band(1920, 1080)
+    assert roi is not None
+    x, y, w, h = roi
+    assert x == 0
+    assert w == 1920
+    assert y == int(1080 * settings.subtitle_roi_top_frac)
+    assert y + h == 1080 or abs((y + h) - 1080) < 2
+    # top-right watermark region is above the band
+    assert y > 1080 * 0.5
+
+
+def test_offset_detections_maps_crop_coords_to_full_frame():
+    det = OcrDetection(text="hello", confidence=0.9, bbox=(10, 5, 40, 12))
+    out = offset_detections([det], origin_x=0, origin_y=756)
+    assert out[0].bbox == (10, 761, 40, 12)

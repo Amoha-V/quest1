@@ -23,7 +23,7 @@ function stageIndex(stage) {
   return STAGES.findIndex((s) => s.id === stage);
 }
 
-export default function StatusBanner({ status, error, stage, message, progress }) {
+export default function StatusBanner({ status, error, stage, message, progress, cached }) {
   if (!status) return null;
 
   if (status === "error") {
@@ -43,8 +43,17 @@ export default function StatusBanner({ status, error, stage, message, progress }
       <div className="border border-found/40 bg-found/10 rounded-lg px-4 py-3 flex items-center gap-3">
         <span className="w-2 h-2 rounded-full bg-found shrink-0" />
         <p className="text-sm text-neutral-200">
-          <span className="font-medium text-found">Done.</span>{" "}
-          First dialogue appearance is ready below.
+          {cached ? (
+            <>
+              <span className="font-medium text-found">Cache hit.</span>{" "}
+              Same video and dialogue were already processed — result loaded without re-running OCR.
+            </>
+          ) : (
+            <>
+              <span className="font-medium text-found">Done.</span>{" "}
+              First dialogue appearance is ready below.
+            </>
+          )}
         </p>
       </div>
     );

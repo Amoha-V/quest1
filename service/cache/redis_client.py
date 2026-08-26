@@ -110,6 +110,7 @@ def set_job_status(
     stage: Optional[str] = None,
     message: Optional[str] = None,
     progress: Optional[float] = None,
+    cached: Optional[bool] = None,
 ) -> None:
     """Persist job status. `stage` / `message` / `progress` (0..1) are optional
     high-level pipeline hints for the UI while status is processing."""
@@ -122,6 +123,7 @@ def set_job_status(
         "stage": stage if stage is not None else existing.get("stage"),
         "message": message if message is not None else existing.get("message"),
         "progress": progress if progress is not None else existing.get("progress"),
+        "cached": cached if cached is not None else existing.get("cached", False),
     }
     if status in (STATUS_DONE, STATUS_ERROR):
         payload["progress"] = 1.0 if status == STATUS_DONE else existing.get("progress")

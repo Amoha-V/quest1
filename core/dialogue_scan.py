@@ -15,18 +15,15 @@ resolver.py answers "when does *this one* target line first appear?"
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
 from core.config import settings
-from core.extraction.frame_extractor import extract_frame
 from core.matching.similarity import similarity_score
-from core.matching.text_filter import filter_detections
-from core.ocr.engine import run_ocr
-from core.preprocessing.frame_preprocessor import preprocess
-from core.sampling.coarse_sampler import coarse_timestamps
+from core.ocr.parallel_scan import iter_scan_detections
 from core.source.metadata import VideoMetadata
 
 logger = logging.getLogger(__name__)
@@ -58,10 +55,9 @@ def _find_existing(
     return None
 
 
-def _best_detection_in_frame(frame) -> Optional[tuple[str, float, tuple[int, int, int, int]]]:
-    """Highest-confidence plausible dialogue detection in a preprocessed frame,
+def _best_detection(detections) -> Optional[tuple[str, float, tuple[int, int, int, int]]]:
+    """Highest-confidence plausible dialogue detection in the subtitle band,
     or None if nothing clears the OCR confidence floor."""
-    detections = filter_detections(run_ocr(preprocess(frame)))
     best = None
     for det in detections:
         if det.confidence < settings.ocr_min_confidence:
@@ -85,27 +81,27 @@ def scan_first_dialogue(
     )
     duration = max(meta.duration_sec, 1e-6)
     last_report_ts = -999.0
-    for ts in coarse_timestamps(meta):
-        if on_progress is not None and (ts - last_report_ts >= 2.0 or ts == 0.0):
-            on_progress(
-                "scan",
-                f"Looking for first dialogue… {ts:.0f}s / {meta.duration_sec:.0f}s",
-                min(ts / duration, 0.95),
+    with contextlib.closing(iter_scan_detections(video_path, meta, on_progress=on_progress)) as scans:
+        for ts, detections in scans:
+            if on_progress is not None and (ts - last_report_ts >= 2.0 or ts == 0.0):
+                on_progress(
+                    "scan",
+                    f"Looking for first dialogue… {ts:.0f}s / {meta.duration_sec:.0f}s",
+                    min(ts / duration, 0.95),
+                )
+                last_report_ts = ts
+            best = _best_detection(detections)
+            if best is None:
+                continue
+            text, confidence, bbox = best
+            logger.info("First dialogue at %.2fs: %r -- stopping scan", ts, text)
+            return DialogueOccurrence(
+                text=text,
+                first_timestamp_sec=ts,
+                frame_number=meta.timestamp_to_frame(ts),
+                confidence=confidence,
+                bbox=bbox,
             )
-            last_report_ts = ts
-        frame = extract_frame(video_path, ts, meta)
-        best = _best_detection_in_frame(frame)
-        if best is None:
-            continue
-        text, confidence, bbox = best
-        logger.info("First dialogue at %.2fs: %r -- stopping scan", ts, text)
-        return DialogueOccurrence(
-            text=text,
-            first_timestamp_sec=ts,
-            frame_number=meta.timestamp_to_frame(ts),
-            confidence=confidence,
-            bbox=bbox,
-        )
     logger.warning("No on-screen dialogue found in coarse first-only pass")
     return None
 
@@ -129,33 +125,32 @@ def scan_all_dialogues(video_path: Path, meta: VideoMetadata, on_progress=None) 
     last_report_ts = -999.0
 
     logger.info("Dialogue scan: full coarse pass (interval=%.2fs)", settings.coarse_sample_interval_sec)
-    for ts in coarse_timestamps(meta):
-        if on_progress is not None and (ts - last_report_ts >= 2.0 or ts == 0.0):
-            on_progress(
-                "scan",
-                f"Scanning all dialogues… {ts:.0f}s / {meta.duration_sec:.0f}s",
-                min(ts / duration, 0.95),
-            )
-            last_report_ts = ts
-        frame = extract_frame(video_path, ts, meta)
-        detections = filter_detections(run_ocr(preprocess(frame)))
-
-        for det in detections:
-            if det.confidence < settings.ocr_min_confidence:
-                continue
-            existing = _find_existing(det.text, dialogues)
-            if existing is not None:
-                continue  # already recorded (this is the same line, later in time)
-            dialogues.append(
-                DialogueOccurrence(
-                    text=det.text,
-                    first_timestamp_sec=ts,
-                    frame_number=meta.timestamp_to_frame(ts),
-                    confidence=det.confidence,
-                    bbox=det.bbox,
+    with contextlib.closing(iter_scan_detections(video_path, meta, on_progress=on_progress)) as scans:
+        for ts, detections in scans:
+            if on_progress is not None and (ts - last_report_ts >= 2.0 or ts == 0.0):
+                on_progress(
+                    "scan",
+                    f"Scanning all dialogues… {ts:.0f}s / {meta.duration_sec:.0f}s",
+                    min(ts / duration, 0.95),
                 )
-            )
-            logger.info("New dialogue at %.2fs: %r", ts, det.text)
+                last_report_ts = ts
+
+            for det in detections:
+                if det.confidence < settings.ocr_min_confidence:
+                    continue
+                existing = _find_existing(det.text, dialogues)
+                if existing is not None:
+                    continue  # already recorded (this is the same line, later in time)
+                dialogues.append(
+                    DialogueOccurrence(
+                        text=det.text,
+                        first_timestamp_sec=ts,
+                        frame_number=meta.timestamp_to_frame(ts),
+                        confidence=det.confidence,
+                        bbox=det.bbox,
+                    )
+                )
+                logger.info("New dialogue at %.2fs: %r", ts, det.text)
 
     dialogues.sort(key=lambda d: d.first_timestamp_sec)
     return dialogues

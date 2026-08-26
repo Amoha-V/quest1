@@ -41,23 +41,20 @@ def test_scan_first_dialogue_stops_at_earliest_detection(monkeypatch):
     )
     calls = {"n": 0}
 
-    def fake_timestamps(_meta):
+    def fake_scans(_video_path, _meta, on_progress=None):
         # would continue past 2.0 if the scanner failed to stop
-        yield from (0.0, 1.0, 2.0, 3.0, 4.0)
+        for ts in (0.0, 1.0, 2.0, 3.0, 4.0):
+            calls["n"] += 1
+            yield ts, []
 
-    def fake_extract(_path, ts, _meta):
-        calls["n"] += 1
-        return object()
-
-    def fake_best(_frame):
-        # first two timestamps empty; third (ts=2.0) has dialogue
+    def fake_best(_detections):
+        # first two frames empty; third (ts=2.0) has dialogue
         if calls["n"] < 3:
             return None
         return ("My mind rebels at stagnation", 0.95, (10, 20, 100, 30))
 
-    monkeypatch.setattr(ds, "coarse_timestamps", fake_timestamps)
-    monkeypatch.setattr(ds, "extract_frame", fake_extract)
-    monkeypatch.setattr(ds, "_best_detection_in_frame", fake_best)
+    monkeypatch.setattr(ds, "iter_scan_detections", fake_scans)
+    monkeypatch.setattr(ds, "_best_detection", fake_best)
 
     result = scan_first_dialogue(Path("dummy.mp4"), meta)
     assert result is not None

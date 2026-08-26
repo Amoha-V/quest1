@@ -10,7 +10,7 @@ single dropped/failed OCR read in the middle of the run.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 
 
 @dataclass
@@ -19,7 +19,8 @@ class TimestampHit:
     text: str
     confidence: float
     similarity: float
-    bbox: tuple[int, int, int, int]
+    # None for ASR (spoken-dialogue) hits -- there's no on-screen region.
+    bbox: Optional[tuple[int, int, int, int]] = None
 
 
 def earliest_hit(hits: List[TimestampHit]) -> TimestampHit:

@@ -54,6 +54,7 @@ def _on_startup() -> None:
 def health():
     from sqlalchemy import text as sa_text
     from service.db.session import engine
+    from service.storage import minio_client
 
     db_url = engine.url.render_as_string(hide_password=True)
     backend = engine.dialect.name
@@ -63,7 +64,19 @@ def health():
         db_ok = True
     except Exception:
         db_ok = False
-    return {"status": "ok" if db_ok else "degraded", "db": backend, "db_url": db_url, "db_ok": db_ok}
+
+    minio = minio_client._get_client()
+    minio_ok = minio is not None
+    overall = "ok" if db_ok and minio_ok else "degraded"
+    return {
+        "status": overall,
+        "db": backend,
+        "db_url": db_url,
+        "db_ok": db_ok,
+        "minio_ok": minio_ok,
+        "minio_endpoint": minio_client.MINIO_ENDPOINT if minio_ok else None,
+        "minio_bucket": minio_client.MINIO_BUCKET if minio_ok else None,
+    }
 
 
 @app.get("/static-local")
