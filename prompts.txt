@@ -4,8 +4,8 @@ LLM PROMPTS USED
 This project was built across three phases of LLM-assisted work: research
 (surveying the problem space), design (working through architecture
 decisions before writing code), and implementation (building, debugging,
-and optimizing with Claude Code). Prompts are listed in the order they were
-actually asked.
+and optimizing with an AI coding assistant). Prompts are listed in the order
+they were actually asked.
 
 
 RESEARCH PHASE
@@ -155,7 +155,7 @@ Initial implementation:
   project, along with the pipeline and what decisions we make at each
   stage
 
-This session (Claude Code):
+This session (AI-assisted implementation):
 
 Phase 1 - Understanding the pipeline
   - Once after the first dialogue is found incase no dialogue is specified

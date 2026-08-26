@@ -1,11 +1,18 @@
-# Approach
+# Approach - Multimodal Dialogue Localization
 
 This document is the "how I actually thought about this" companion to
 `DESIGN.md` (the technical architecture reference). The assignment asks four
 specific questions - where to look, how to pin the exact frame, how to
 extract the text, how to handle ambiguity - so I've segmented the whole
 problem statement along exactly those four lines, and describe how my
-understanding of each one changed as I worked through it with Claude Code.
+understanding of each one changed as I worked through it with an AI coding
+assistant.
+
+## 1. Objective
+
+The system is designed to identify the first occurrence of a given dialogue
+in a video, regardless of whether the dialogue appears as on-screen text or
+is only spoken in the audio.
 
 ## How I read the problem statement
 
@@ -41,8 +48,8 @@ things changed that:
    continuing to scan. I pushed on making all three of those actually
    correct and actually fast, not just present - profiling before
    optimizing (I asked *why* it was slow before accepting *that* it was
-   slow, and had Claude Code measure per-stage cost on the real video rather
-   than guess).
+   slow, and had the AI assistant measure per-stage cost on the real video
+   rather than guess).
 
 2. **The bigger correction: I watched the actual video and there was no
    on-screen caption at all.** The line is spoken, not shown. That's the
